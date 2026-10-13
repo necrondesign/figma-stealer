@@ -144,10 +144,12 @@ python3 -m coloro serve
 On macOS you can also double-click `Figma Stealer.command`. A browser opens. Then:
 
 1. **Settings (the gear)**: paste a Figma personal access token (Figma → Settings → Security →
-   Personal access tokens) with read access to file content and comments. Load the project's
-   token library here too, if you have one.
-2. **New project** and **Add files** on the left: paste links to Figma files. Pages can be
-   limited by words in their names.
+   Personal access tokens) with read access to file content and comments, and to folders if
+   you want to add whole folders. Load the project's token library here too, if you have one.
+2. **New project** and **Add files** on the left: paste links to Figma files. A folder link
+   (`https://www.figma.com/files/folder/…` or `…/files/team/…/folder/…`) adds every file of
+   the folder; files already in the project are skipped. Pages can be limited by words in
+   their names.
 3. **Update.** The first load of a big file takes minutes; an update with no changes takes
    seconds, because only the file version is checked and only changed pages are downloaded.
    Comments are refreshed on every update.

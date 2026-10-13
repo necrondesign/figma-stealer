@@ -66,3 +66,25 @@ def parse_link(url: str) -> tuple[str, str | None]:
     if node:
         node = node.replace("-", ":")
     return key, node
+
+
+_ID_RE = re.compile(r"^[0-9]+$")
+
+
+def parse_folder_link(url: str) -> str | None:
+    """Ссылка на папку Figma → id папки; для любой другой ссылки — None.
+
+    Понимает /files/folder/ID, /files/team/КОМАНДА/folder/ID и старое название папок —
+    /files/project/ID и /files/team/КОМАНДА/project/ID/Имя.
+    """
+    u = urlparse((url or "").strip())
+    host = (u.netloc or "").lower()
+    if not (host == "figma.com" or host.endswith(".figma.com")):
+        return None
+    parts = [p for p in u.path.split("/") if p]
+    if not parts or parts[0] != "files":
+        return None
+    for i, p in enumerate(parts[1:-1], start=1):
+        if p in ("folder", "project") and _ID_RE.match(parts[i + 1]):
+            return parts[i + 1]
+    return None

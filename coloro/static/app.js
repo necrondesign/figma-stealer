@@ -322,13 +322,33 @@ function drawFiles() {
 
 $("#export").onclick = () => toast("Building the report. Large projects take up to 20 seconds.");
 /** Добавить файлы в текущий проект: несколько ссылок сразу, страницы и токен, если его нет. */
+/** Adds every link to the project; a folder link brings every file of the folder.
+    Shows what was added and returns how many files the project got. */
+async function addLinks(links, pages, pid) {
+  let files = 0, added = 0;
+  const done = [], bad = [];
+  for (const url of links) {
+    try {
+      const r = await api("/api/sources", { url, pages, project: pid });
+      if (r.folder == null) { files += 1; added += 1; continue; }
+      added += r.added;
+      done.push(r.added ? `${pl(r.added, "file")} added from ${r.folder}` : `All files of ${r.folder} are already in the project`);
+    } catch (err) { bad.push(`${url}: ${err.message}`); }
+  }
+  return { added, bad, failed: bad.length === links.length, show() {
+    if (files) toast(`${pl(files, "file")} added`, "ok");
+    for (const d of done) toast(d, "ok");
+    for (const b of bad) toast(b, "err", true);
+  } };
+}
+
 function addFilesDialog() {
   const p = project();
   const needToken = !S.st.figma_token;
   dialog(`Add files to ${p.name}`, `
     <form id="afForm">
       <div class="f"><span class="label">Figma file links</span><textarea class="in" name="links" placeholder="https://www.figma.com/design/…&#10;One link per line" required></textarea>
-        <span class="hint">A link to a file, a page or a frame. The whole file is loaded; the filters decide what to count.</span></div>
+        <span class="hint">A link to a file, a page or a frame. The whole file is loaded; the filters decide what to count. A folder link adds every file of the folder.</span></div>
       <div class="f"><span class="label">Only pages whose name contains</span><input class="in" name="pages" placeholder="All pages">
         <span class="hint">For example, ready or release. Separate several words with commas. Can be changed later for each file.</span></div>
       ${needToken ? `<div class="f"><span class="label">Figma access token</span><input class="in" type="password" name="token" placeholder="figd_…" autocomplete="off">
@@ -345,15 +365,12 @@ function addFilesDialog() {
     btn.disabled = true;
     try {
       if (needToken && f.elements.token.value.trim()) await api("/api/figma-token", { token: f.elements.token.value.trim() });
-      const bad = [];
-      for (const url of links) {
-        try { await api("/api/sources", { url, pages, project: p.id }); } catch (err) { bad.push(`${url}: ${err.message}`); }
-      }
-      if (bad.length === links.length) { for (const b of bad) toast(b, "err", true); btn.disabled = false; return; }
+      const r = await addLinks(links, pages, p.id);
+      if (r.failed) { r.show(); btn.disabled = false; return; }
       closeDialog();
-      toast(`${pl(links.length - bad.length, "file")} added`, "ok");
-      for (const b of bad) toast(b, "err", true);
+      r.show();
       await refresh();
+      if (!r.added) return;
       if (S.st.figma_token) startUpdate({ project: p.id });
       else { toast("Add a Figma access token to load the files", "err"); openSettings(); }
     } catch (err) { toast(err.message, "err"); btn.disabled = false; }
@@ -2056,7 +2073,7 @@ const closeDialog = () => { $("#veil").hidden = true; };
 
 const TOKEN_WHY = `A link only says which file to read. Figma gives the file’s data through its API only with a personal access token,
   the same way it checks your access when you open the file. Stealer reads files with your token; it never changes them.
-  Create one in Figma: Settings → Security → Personal access tokens, with read access to file content and comments.`;
+  Create one in Figma: Settings → Security → Personal access tokens, with read access to file content and comments (and to folders, to add a whole folder at once).`;
 
 function newProjectDialog() {
   const needToken = !S.st.figma_token;
@@ -2064,7 +2081,7 @@ function newProjectDialog() {
     <form id="npForm">
       <div class="f"><span class="label">Project name</span><input class="in" name="name" placeholder="For example, Mobile app" maxlength="80" required></div>
       <div class="f"><span class="label">Figma file links</span><textarea class="in" name="links" placeholder="https://www.figma.com/design/…&#10;One link per line"></textarea>
-        <span class="hint">Optional. Files can also be added later with + in the left panel.</span></div>
+        <span class="hint">Optional. A folder link adds every file of the folder. Files can also be added later with + in the left panel.</span></div>
       <div class="f"><span class="label">Only pages whose name contains</span><input class="in" name="pages" placeholder="All pages">
         <span class="hint">For example, ready or release. Separate several words with commas.</span></div>
       ${needToken ? `<div class="f"><span class="label">Figma access token</span><input class="in" type="password" name="token" placeholder="figd_…" autocomplete="off">
@@ -2084,17 +2101,14 @@ function newProjectDialog() {
       S.project = r.id; S.search = null; save(); syncSearchForm();
       const pages = f.elements.pages.value.split(",").map((x) => x.trim()).filter(Boolean);
       const links = f.elements.links.value.split(/\s+/).map((x) => x.trim()).filter(Boolean);
-      const bad = [];
-      for (const url of links) {
-        try { await api("/api/sources", { url, pages, project: r.id }); } catch (err) { bad.push(`${url}: ${err.message}`); }
-      }
+      const added = await addLinks(links, pages, r.id);
       const lib = f.elements.lib.files[0];
       if (lib) await api("/api/tokens", { filename: lib.name, text: await lib.text(), project: r.id });
       closeDialog();
       toast(`Project created: ${f.elements.name.value.trim()}`, "ok");
-      for (const b of bad) toast(b, "err", true);
+      added.show();
       await refresh();
-      if (links.length > bad.length) {
+      if (added.added) {
         if (S.st.figma_token) startUpdate({ project: r.id });
         else { toast("Add a Figma access token to load the files", "err"); openSettings(); }
       } else { addFilesDialog(); }

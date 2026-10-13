@@ -85,8 +85,8 @@ class Figma:
                 pass
         self._local.conn = None
 
-    def get_bytes(self, path: str, params: dict | None = None) -> bytes:
-        url = "/v1" + path + ("?" + urlencode(params) if params else "")
+    def get_bytes(self, path: str, params: dict | None = None, api: str = "v1") -> bytes:
+        url = "/" + api + path + ("?" + urlencode(params) if params else "")
         last = None
         for attempt in range(1, ATTEMPTS + 1):
             _wait_shared(self._on_wait)
@@ -147,8 +147,8 @@ class Figma:
             raise FigmaError("http", f"Figma returned status {status}", status)
         raise last or FigmaError("network", "Cannot reach Figma")
 
-    def get_json(self, path: str, params: dict | None = None) -> dict:
-        body = self.get_bytes(path, params)
+    def get_json(self, path: str, params: dict | None = None, api: str = "v1") -> dict:
+        body = self.get_bytes(path, params, api)
         try:
             return json.loads(body)
         except ValueError as e:
@@ -171,3 +171,23 @@ class Figma:
         if depth is not None:
             params["depth"] = depth
         return self.get_json(f"/files/{key}/nodes", params)
+
+    def folder_files(self, folder_id: str) -> dict:
+        """Файлы папки: {"name": имя папки, "files": [{"key", "name", …}]}.
+
+        Папки раньше назывались проектами: старый адрес /v1/projects/… требует права
+        projects:read, которое в новый токен уже не выбрать. Новый — /v2/folders/…/files
+        с правом folders:read; старый остаётся запасным для старых токенов.
+        """
+        denied = False
+        for api, path in (("v2", f"/folders/{folder_id}/files"), ("v1", f"/projects/{folder_id}/files")):
+            try:
+                return self.get_json(path, api=api)
+            except FigmaError as e:
+                if e.code == "forbidden":
+                    denied = True
+                elif e.code != "not_found":
+                    raise
+        if denied:
+            raise FigmaError("no_folder_scope", "The token cannot list folders: create one with Folders: read", 403)
+        raise FigmaError("not_found", "Folder not found. Check the folder link and access.", 404)

@@ -270,15 +270,44 @@ def _project(con, value) -> int:
     return pid
 
 
-def add_source(con, url: str, pages, project) -> dict:
+def add_source(con, url: str, pages, project, figma=None) -> dict:
+    """Ссылка на файл добавляет файл, ссылка на папку — все файлы папки.
+    figma — клиент для списка файлов папки; по умолчанию с сохранённым токеном."""
     pid = _project(con, project)
-    key, node = rules.parse_link(url)
     pats = [p.strip() for p in (pages or []) if p and p.strip()] or None
+    folder = rules.parse_folder_link(url)
+    if folder:
+        return _add_folder(con, folder, pats, pid, figma)
+    key, node = rules.parse_link(url)
     with dbm.writing(con):
         con.execute("INSERT OR IGNORE INTO sources (url, file_key, node_id, pages, added_at, project_id)"
                     " VALUES (?, ?, ?, ?, ?, ?)",
                     (url.strip(), key, node, json.dumps(pats) if pats else None, _now(), pid))
     return {"file_key": key}
+
+
+def _add_folder(con, folder: str, pats, pid: int, figma=None) -> dict:
+    """Все файлы папки — отдельными ссылками; файлы, что уже есть в проекте, пропускаются."""
+    if figma is None:
+        token = read_token()
+        if not token:
+            raise ValueError("Add a Figma access token to add a folder")
+        figma = Figma(token)
+    got = figma.folder_files(folder)
+    name = got.get("name") or f"folder {folder}"
+    have = {r[0] for r in con.execute("SELECT file_key FROM sources WHERE project_id = ?", (pid,))}
+    added = 0
+    with dbm.writing(con):
+        for f in got.get("files") or []:
+            key = str(f.get("key") or "")
+            if not key or key in have or not rules._KEY_RE.match(key):
+                continue
+            have.add(key)
+            con.execute("INSERT OR IGNORE INTO sources (url, file_key, node_id, pages, added_at, project_id)"
+                        " VALUES (?, ?, NULL, ?, ?, ?)",
+                        (f"https://www.figma.com/design/{key}", key, json.dumps(pats) if pats else None, _now(), pid))
+            added += 1
+    return {"folder": name, "added": added, "files": len(got.get("files") or [])}
 
 
 _FILE_TABLES = ("nodes", "paints", "pages", "files", "snapshots", "components", "props", "effects", "images",
@@ -526,7 +555,7 @@ class Handler(BaseHTTPRequestHandler):
         con = dbm.connect(DB_PATH)
         try:
             return self._post(con, u.path, body)
-        except (ValueError, rules.LinkError, tokens.TokensError) as e:
+        except (ValueError, rules.LinkError, tokens.TokensError, FigmaError) as e:
             return self._error(str(e))
         finally:
             con.close()
